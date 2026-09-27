@@ -72,7 +72,7 @@ textarea{min-height:90px;resize:vertical}
 .item .sub{font-size:13px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .badge{display:inline-block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;padding:2px 7px;border-radius:6px;
   color:#fff;vertical-align:2px;margin-left:6px}
-.b-boulder{background:var(--boulder)} .b-lead{background:var(--lead)} .b-toprope{background:var(--toprope)}
+.b-boulder{background:var(--boulder)} .b-comp{background:transparent;color:var(--boulder)!important;border:1.5px solid var(--boulder);padding:1px 6px} .b-lead{background:var(--lead)} .b-toprope{background:var(--toprope)}
 @media (prefers-color-scheme: dark){.badge{color:#111}}
 .att{font-size:13px;font-weight:600;color:var(--muted);text-align:right;flex:none}
 .att.flash{color:var(--accent)}
@@ -102,6 +102,11 @@ dialog p{margin:0 0 18px;color:var(--muted)}
 .muted{color:var(--muted);font-size:14px}
 .sp{height:12px}
 svg{display:block}
+.chilis{display:inline-flex;gap:1px;vertical-align:-4px}
+.chili{width:22px;height:22px;display:inline-block}
+.chip .chilis{vertical-align:-5px}
+.stat .v .chili{width:18px;height:18px}
+.bests{grid-template-columns:repeat(2,1fr)}
 </style>
 </head>
 <body>
@@ -140,8 +145,19 @@ const BOULDER_GRADES = ["V0","V1","V2-V3","V2-V4","V3-V5","V4-V6","V5-V7","V6-V8
 const ROPE_GRADES = ["5.10a","5.10b","5.10c","5.10d","5.11a","5.11b","5.11c","5.11d",
                      "5.12a","5.12b","5.12c","5.12d","5.13a","5.13b","5.13c","5.13d"];
 const ATTEMPTS = [1,2,3,4,5,6,7,8,9,10];
-const gradesFor = t => t === "boulder" ? BOULDER_GRADES : ROPE_GRADES;
-const gradeIdx = c => gradesFor(c.type).indexOf(c.grade);
+const COMP_GRADES = ["C1","C2","C3","C4","C5"];
+const STYLES = { trad:"Traditional", comp:"Comp" };
+const isComp = c => c.type === "boulder" && c.style === "comp";
+const gradesFor = (t, style) => t !== "boulder" ? ROPE_GRADES : style === "comp" ? COMP_GRADES : BOULDER_GRADES;
+const gradeIdx = c => gradesFor(c.type, c.style).indexOf(c.grade);
+// category used for stats and sorting: rope grades, traditional V grades, comp chilis
+const CATS = { boulder:"Boulder", comp:"Comp boulder", lead:"Lead", toprope:"Top rope" };
+const catOf = c => isComp(c) ? "comp" : c.type;
+const CHILI = `<svg class="chili" viewBox="0 0 24 24" aria-hidden="true"><path fill="#e03131" d="M5.6 9.2C4.2 14.4 7.6 20.6 15.6 22c2 .35 3.1-.7 2.1-1.7-3.9-3.7-4.6-8.1-3.6-11.6-2.6-1.9-6.2-1.8-8.5.5z"/><path fill="#fff" opacity=".4" d="M7.4 11.2c-.3 3.3 1.4 6.6 4.6 8.6-3.9-.8-6-4.8-4.6-8.6z"/><path fill="#2f9e44" d="M5.2 9.4c1.9-2.2 6.8-2.4 9.4-.2-1 1.2-2.8 1.6-4.8 1.4-1.9-.2-3.4-.5-4.6-1.2z"/><path fill="none" stroke="#2f9e44" stroke-width="2" stroke-linecap="round" d="M9.9 8.4c-.2-2.3 1-4.3 3.4-5.3"/></svg>`;
+const chilis = n => `<span class="chilis" role="img" aria-label="${n} chili">${CHILI.repeat(n)}</span>`;
+const gradeHTML = (grade, type, style) => (type === "boulder" && style === "comp") ? chilis(Number(String(grade).slice(1))) : esc(grade);
+const gradeText = c => isComp(c) ? `${c.grade.slice(1)}-chili comp` : c.grade;
+const badgeHTML = c => `<span class="badge b-${c.type}">${TYPES[c.type]}</span>${isComp(c) ? `<span class="badge b-comp">Comp</span>` : ""}`;
 const attLabel = n => n === 1 ? "Flash" : n >= 10 ? "10+" : String(n);
 const attLong = n => n === 1 ? "Flash" : n >= 10 ? "10+ attempts" : n + " attempts";
 
@@ -215,7 +231,7 @@ const itemHTML = c => `
   <a class="item card" href="#/climb/${c.id}">
     ${c.thumb ? `<img class="thumb" src="${objUrl(c.thumb)}" alt="">` : `<div class="thumb"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M3 20l6-10 4 6 3-4 5 8z"/></svg></div>`}
     <div class="main">
-      <div class="g">${esc(c.grade)}<span class="badge b-${c.type}">${TYPES[c.type]}</span></div>
+      <div class="g">${gradeHTML(c.grade, c.type, c.style)}${badgeHTML(c)}</div>
       <div class="sub">${c.notes ? esc(c.notes) : fmtDate(c.date)}</div>
     </div>
     <div class="att ${c.attempts===1?"flash":""}">${attLabel(c.attempts)}</div>
@@ -228,8 +244,8 @@ async function viewHome(){
   const now = new Date(), ym = now.getFullYear()+"-"+String(now.getMonth()+1).padStart(2,"0");
   const sessions = new Set(all.map(c => c.date)).size;
   const month = all.filter(c => c.date.startsWith(ym)).length;
-  const best = t => { const xs = all.filter(c => c.type === t); if (!xs.length) return "—";
-    return xs.reduce((a,b) => gradeIdx(b) > gradeIdx(a) ? b : a).grade; };
+  const best = k => { const xs = all.filter(c => catOf(c) === k); if (!xs.length) return "—";
+    const b = xs.reduce((a,b) => gradeIdx(b) > gradeIdx(a) ? b : a); return gradeHTML(b.grade, b.type, b.style); };
   const recent = [...all].sort((a,b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt).slice(0,5);
   $("#app").innerHTML = `
     <a class="btn primary big" href="#/log">
@@ -242,7 +258,7 @@ async function viewHome(){
     </div>
     <h2>Hardest sends</h2>
     <div class="bests">
-      ${Object.keys(TYPES).map(t => `<div class="stat card"><div class="v">${best(t)}</div><div class="l">${TYPES[t]}</div></div>`).join("")}
+      ${Object.keys(CATS).map(k => `<div class="stat card"><div class="v">${best(k)}</div><div class="l">${CATS[k]}</div></div>`).join("")}
     </div>
     <h2>Recent</h2>
     ${recent.length ? `<div class="list">${recent.map(itemHTML).join("")}</div>
@@ -255,15 +271,19 @@ async function viewForm(id){
   let c = editing ? await getOne(id) : null;
   if (editing && !c){ location.replace("#/history"); return; }
   const last = !editing ? (await getAll()).sort((a,b)=>b.createdAt-a.createdAt)[0] : null;
-  const f = c ? { ...c } : { type: last ? last.type : "boulder", grade:null, attempts:1, notes:"", date: todayStr(), photo:null, thumb:null };
+  const f = c ? { ...c, style: c.style || "trad" } : { type: last ? last.type : "boulder", style: (last && last.style) || "trad", grade:null, attempts:1, notes:"", date: todayStr(), photo:null, thumb:null };
   setHeader(editing ? "Edit climb" : "Log climb", editing); setTab(editing ? "history" : "log");
 
   const render = () => {
     $("#app").innerHTML = `
       <label class="f">Type</label>
       <div class="seg" id="typeSeg">${Object.entries(TYPES).map(([k,v]) => `<button type="button" data-v="${k}" aria-pressed="${f.type===k}">${v}</button>`).join("")}</div>
+      <div class="${f.type === "boulder" ? "" : "hidden"}">
+        <label class="f">Style</label>
+        <div class="seg" id="styleSeg">${Object.entries(STYLES).map(([k,v]) => `<button type="button" data-v="${k}" aria-pressed="${f.style===k}">${v}</button>`).join("")}</div>
+      </div>
       <label class="f">Grade</label>
-      <div class="chips" id="gradeChips">${gradesFor(f.type).map(g => `<button type="button" class="chip" data-v="${g}" aria-pressed="${f.grade===g}">${g}</button>`).join("")}</div>
+      <div class="chips" id="gradeChips">${gradesFor(f.type, f.style).map(g => `<button type="button" class="chip" data-v="${g}" aria-pressed="${f.grade===g}">${gradeHTML(g, f.type, f.style)}</button>`).join("")}</div>
       <div class="err hidden" id="gradeErr">Pick a grade.</div>
       <label class="f">Number of attempts</label>
       <div class="chips" id="attChips">${ATTEMPTS.map(n => `<button type="button" class="chip" data-v="${n}" aria-pressed="${f.attempts===n}">${attLabel(n)}</button>`).join("")}</div>
@@ -289,7 +309,9 @@ async function viewForm(id){
       <div class="sp"></div>`;
 
     $("#typeSeg").onclick = e => { const b = e.target.closest("button"); if (!b) return;
-      if (b.dataset.v !== f.type){ saveText(); f.type = b.dataset.v; if (!gradesFor(f.type).includes(f.grade)) f.grade = null; render(); } };
+      if (b.dataset.v !== f.type){ saveText(); f.type = b.dataset.v; if (!gradesFor(f.type, f.style).includes(f.grade)) f.grade = null; render(); } };
+    $("#styleSeg").onclick = e => { const b = e.target.closest("button"); if (!b) return;
+      if (b.dataset.v !== f.style){ saveText(); f.style = b.dataset.v; if (!gradesFor(f.type, f.style).includes(f.grade)) f.grade = null; render(); } };
     $("#gradeChips").onclick = e => { const b = e.target.closest("button"); if (!b) return;
       f.grade = b.dataset.v; $("#gradeErr").classList.add("hidden");
       $("#gradeChips").querySelectorAll(".chip").forEach(x => x.setAttribute("aria-pressed", x === b)); };
@@ -311,7 +333,7 @@ async function viewForm(id){
       if (!f.grade){ $("#gradeErr").classList.remove("hidden"); $("#gradeChips").scrollIntoView({behavior:"smooth", block:"center"}); return; }
       if (!f.date) f.date = todayStr();
       const now = Date.now();
-      const rec = { id: f.id || uid(), type:f.type, grade:f.grade, attempts:f.attempts, notes:f.notes.trim(), date:f.date,
+      const rec = { id: f.id || uid(), type:f.type, style: f.type === "boulder" ? f.style : null, grade:f.grade, attempts:f.attempts, notes:f.notes.trim(), date:f.date,
                     photo:f.photo || null, thumb:f.thumb || null, createdAt: f.createdAt || now, updatedAt: now };
       $("#save").disabled = true;
       await putOne(rec);
@@ -332,13 +354,13 @@ async function deleteClimb(id){
 async function viewDetail(id){
   const c = await getOne(id);
   if (!c){ location.replace("#/history"); return; }
-  setHeader(c.grade, true, `<a class="iconbtn" href="#/edit/${c.id}" aria-label="Edit" style="color:var(--text)">
+  setHeader(gradeText(c), true, `<a class="iconbtn" href="#/edit/${c.id}" aria-label="Edit" style="color:var(--text)">
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg></a>`);
   setTab("history");
   $("#app").innerHTML = `<div class="detail">
     ${c.photo ? `<img src="${objUrl(c.photo)}" alt="Route photo">` : ""}
     <dl class="kv card">
-      <dt>Grade</dt><dd>${esc(c.grade)}<span class="badge b-${c.type}">${TYPES[c.type]}</span></dd>
+      <dt>Grade</dt><dd>${gradeHTML(c.grade, c.type, c.style)}${badgeHTML(c)}</dd>
       <dt>Attempts</dt><dd>${attLong(c.attempts)}</dd>
       <dt>Date</dt><dd>${fmtDate(c.date, true)}</dd>
       ${c.notes ? `<dt>Notes</dt><dd class="notes">${esc(c.notes)}</dd>` : ""}
@@ -349,7 +371,7 @@ async function viewDetail(id){
   $("#del").onclick = () => deleteClimb(c.id);
 }
 
-const hist = { q:"", type:"all", grade:"any", att:"any", period:"all", sort:"new" };
+const hist = { q:"", type:"all", style:"any", grade:"any", att:"any", period:"all", sort:"new" };
 try { Object.assign(hist, JSON.parse(sessionStorage.getItem("hist") || "{}")); } catch {}
 async function viewHistory(){
   setHeader("History", false); setTab("history");
@@ -358,6 +380,8 @@ async function viewHistory(){
     <div class="toolbar">
       <input type="search" id="q" placeholder="Search grade or notes" value="${esc(hist.q)}">
       <div class="seg" id="tSeg">${[["all","All"],...Object.entries(TYPES)].map(([k,v]) => `<button data-v="${k}" aria-pressed="${hist.type===k}">${v}</button>`).join("")}</div>
+      <select id="style" aria-label="Boulder style" class="hidden">
+        <option value="any">Traditional and comp</option><option value="trad">Traditional only</option><option value="comp">Comp only</option></select>
       <div class="row">
         <select id="grade" aria-label="Grade"></select>
         <select id="att" aria-label="Attempts">
@@ -378,12 +402,16 @@ async function viewHistory(){
 
   const gradeSel = $("#grade");
   const fillGrades = () => {
-    const opts = hist.type === "all" ? [] : gradesFor(hist.type);
+    if (hist.type !== "boulder") hist.style = "any";
+    $("#style").classList.toggle("hidden", hist.type !== "boulder"); $("#style").value = hist.style;
+    const can = hist.type !== "all" && !(hist.type === "boulder" && hist.style === "any");
+    const opts = can ? gradesFor(hist.type, hist.style) : [];
+    const lbl = g => hist.style === "comp" ? `${g.slice(1)} chili` : g;
     if (!opts.includes(hist.grade.replace(/^min:/, ""))) hist.grade = "any";
-    gradeSel.innerHTML = `<option value="any">${hist.type==="all" ? "Any grade" : "Any grade"}</option>` +
-      opts.map(g => `<option value="${g}">${g} only</option>`).join("") +
-      opts.slice(1).map(g => `<option value="min:${g}">${g} and harder</option>`).join("");
-    gradeSel.disabled = hist.type === "all";
+    gradeSel.innerHTML = `<option value="any">Any grade</option>` +
+      opts.map(g => `<option value="${g}">${lbl(g)} only</option>`).join("") +
+      opts.slice(1).map(g => `<option value="min:${g}">${lbl(g)} and harder</option>`).join("");
+    gradeSel.disabled = !can;
     gradeSel.value = hist.grade;
   };
   fillGrades();
@@ -400,19 +428,22 @@ async function viewHistory(){
       from = d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); }
     let xs = all.filter(c => {
       if (hist.type !== "all" && c.type !== hist.type) return false;
+      if (hist.style === "comp" && !isComp(c)) return false;
+      if (hist.style === "trad" && isComp(c)) return false;
       if (hist.grade !== "any"){
-        if (hist.grade.startsWith("min:")){ if (gradeIdx(c) < gradesFor(c.type).indexOf(hist.grade.slice(4))) return false; }
+        if (hist.grade.startsWith("min:")){ if (gradeIdx(c) < gradesFor(c.type, c.style).indexOf(hist.grade.slice(4))) return false; }
         else if (c.grade !== hist.grade) return false;
       }
       if (hist.att === "flash" && c.attempts !== 1) return false;
       if (hist.att === "le3" && c.attempts > 3) return false;
       if (hist.att === "ge4" && c.attempts < 4) return false;
       if (from && c.date < from) return false;
-      if (q && !(c.grade.toLowerCase().includes(q) || (c.notes||"").toLowerCase().includes(q) || TYPES[c.type].toLowerCase().includes(q))) return false;
+      if (q && ![gradeText(c), c.notes || "", TYPES[c.type], isComp(c) ? "comp chili" : c.type === "boulder" ? "traditional" : ""].join(" ").toLowerCase().includes(q)) return false;
       return true;
     });
     const byDate = (a,b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt;
-    const byGrade = (a,b) => (a.type==="boulder") - (b.type==="boulder") || gradeIdx(b) - gradeIdx(a);
+    const rank = { lead:0, toprope:0, boulder:1, comp:2 };
+    const byGrade = (a,b) => rank[catOf(a)] - rank[catOf(b)] || gradeIdx(b) - gradeIdx(a);
     const cmp = { new: byDate, old: (a,b) => -byDate(a,b), hard: (a,b) => byGrade(a,b) || byDate(a,b),
                   easy: (a,b) => -byGrade(a,b) || byDate(a,b), att: (a,b) => a.attempts - b.attempts || byDate(a,b) }[hist.sort];
     xs.sort(cmp);
@@ -430,6 +461,7 @@ async function viewHistory(){
   $("#q").oninput = e => { hist.q = e.target.value; draw(); };
   $("#tSeg").onclick = e => { const b = e.target.closest("button"); if (!b) return; hist.type = b.dataset.v;
     $("#tSeg").querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", x === b)); fillGrades(); draw(); };
+  $("#style").onchange = e => { hist.style = e.target.value; fillGrades(); draw(); };
   gradeSel.onchange = e => { hist.grade = e.target.value; draw(); };
   $("#att").onchange = e => { hist.att = e.target.value; draw(); };
   $("#period").onchange = e => { hist.period = e.target.value; draw(); };
