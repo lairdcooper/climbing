@@ -93,7 +93,7 @@ nav.tabs a{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;
 nav.tabs a[aria-current="page"]{color:var(--accent)}
 nav.tabs a.log span.plus{background:var(--accent);color:var(--accent-ink);width:44px;height:30px;border-radius:15px;display:grid;place-items:center}
 .toast{position:fixed;left:50%;bottom:calc(84px + env(safe-area-inset-bottom));transform:translateX(-50%);background:var(--text);color:var(--bg);
-  padding:10px 18px;border-radius:999px;font-weight:600;font-size:14px;z-index:30;opacity:0;transition:opacity .2s;pointer-events:none}
+  padding:10px 18px;border-radius:999px;font-weight:600;font-size:14px;z-index:30;opacity:0;white-space:nowrap;max-width:calc(100% - 32px);overflow:hidden;text-overflow:ellipsis;transition:opacity .2s;pointer-events:none}
 .toast.show{opacity:1}
 dialog{border:0;border-radius:18px;padding:20px;background:var(--surface);color:var(--text);max-width:340px;width:calc(100% - 32px)}
 dialog::backdrop{background:rgba(0,0,0,.45)}
@@ -102,6 +102,16 @@ dialog p{margin:0 0 18px;color:var(--muted)}
 .muted{color:var(--muted);font-size:14px}
 .sp{height:12px}
 svg{display:block}
+.banner{display:flex;align-items:center;gap:12px;margin:12px 16px 0;padding:12px 14px;border-radius:var(--radius);
+  background:var(--surface);border:1.5px solid var(--accent);max-width:608px}
+@media (min-width:640px){.banner{margin:12px auto 0}}
+.banner .bt{flex:1;display:flex;flex-direction:column;font-size:14px}
+.banner .bt span{color:var(--muted);font-size:13px}
+.banner .btn{width:auto;padding:9px 14px}
+.banner .iconbtn{margin:0;color:var(--muted)}
+.okline{display:flex;gap:8px;align-items:flex-start;font-size:14px;margin:6px 0}
+.okline .dot{width:9px;height:9px;border-radius:50%;margin-top:6px;flex:none;background:var(--toprope)}
+.okline .dot.warn{background:var(--danger)}
 .chilis{display:inline-flex;gap:1px;vertical-align:-4px}
 .chili{width:22px;height:22px;display:inline-block}
 .chip .chilis{vertical-align:-5px}
@@ -117,6 +127,12 @@ svg{display:block}
   <h1 id="title">Climb Log</h1>
   <span id="headerRight"></span>
 </header>
+<div id="bkBanner" class="banner hidden">
+  <div class="bt"><b>Backup due</b><span id="bkText"></span></div>
+  <button class="btn primary" id="bkNow">Back up</button>
+  <button class="iconbtn" id="bkLater" aria-label="Remind me later">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+</div>
 <main id="app"></main>
 
 <nav class="tabs">
@@ -166,16 +182,20 @@ let _db;
 function db(){
   if (_db) return Promise.resolve(_db);
   return new Promise((res, rej) => {
-    const r = indexedDB.open("climblog", 1);
-    r.onupgradeneeded = () => r.result.createObjectStore("climbs", { keyPath:"id" });
+    const r = indexedDB.open("climblog", 2);
+    r.onupgradeneeded = () => {
+      const d = r.result;
+      if (!d.objectStoreNames.contains("climbs")) d.createObjectStore("climbs", { keyPath:"id" });
+      if (!d.objectStoreNames.contains("meta")) d.createObjectStore("meta");
+    };
     r.onsuccess = () => { _db = r.result; res(_db); };
     r.onerror = () => rej(r.error);
   });
 }
-async function tx(mode, fn){
+async function tx(mode, fn, store = "climbs"){
   const d = await db();
   return new Promise((res, rej) => {
-    const t = d.transaction("climbs", mode), s = t.objectStore("climbs");
+    const t = d.transaction(store, mode), s = t.objectStore(store);
     let out; const r = fn(s);
     if (r) r.onsuccess = () => out = r.result;
     t.oncomplete = () => res(out); t.onerror = () => rej(t.error); t.onabort = () => rej(t.error);
@@ -183,8 +203,13 @@ async function tx(mode, fn){
 }
 const getAll = () => tx("readonly", s => s.getAll()).then(a => a || []);
 const getOne = id => tx("readonly", s => s.get(id));
-const putOne = c => tx("readwrite", s => s.put(c));
-const delOne = id => tx("readwrite", s => s.delete(id));
+const metaGet = k => tx("readonly", s => s.get(k), "meta");
+const metaSet = (k, v) => tx("readwrite", s => s.put(v, k), "meta");
+async function getSettings(){ return { interval:3, lastBackupAt:0, lastChangeAt:0, ...(await metaGet("settings") || {}) }; }
+async function updSettings(patch){ const st = { ...(await getSettings()), ...patch }; await metaSet("settings", st); return st; }
+const markChanged = () => updSettings({ lastChangeAt: Date.now() });
+const putOne = c => tx("readwrite", s => s.put(c)).then(markChanged);
+const delOne = id => tx("readwrite", s => s.delete(id)).then(markChanged);
 if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(()=>{});
 
 /* ---------- helpers ---------- */
@@ -472,41 +497,136 @@ async function viewHistory(){
 /* ---------- backup ---------- */
 const blobToDataURL = b => new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(b); });
 const dataURLToBlob = async u => (await fetch(u)).blob();
+const DAY = 86400000;
+const canPickFile = "showSaveFilePicker" in window;
+const AUTO_NAME = "climb-log-backup.json";
+
+async function buildBackup(){
+  const out = [];
+  for (const c of await getAll())
+    out.push({ ...c, photo: c.photo ? await blobToDataURL(c.photo) : null, thumb: c.thumb ? await blobToDataURL(c.thumb) : null });
+  return new Blob([JSON.stringify({ app:"climblog", version:2, exportedAt:new Date().toISOString(), climbs: out })], { type:"application/json" });
+}
+// Overwrite the chosen backup file. Returns true on success.
+async function writeToFile(handle){
+  const w = await handle.createWritable();
+  await w.write(await buildBackup()); await w.close();
+  await updSettings({ lastBackupAt: Date.now() });
+  return true;
+}
+async function filePermission(handle, ask){
+  const o = { mode:"readwrite" };
+  let p = await handle.queryPermission(o);
+  if (p !== "granted" && ask) p = await handle.requestPermission(o);
+  return p === "granted";
+}
+// Share sheet on the phone (Drive, Files, email...), plain download elsewhere. Returns true if saved.
+async function manualExport(){
+  const blob = await buildBackup();
+  const name = `climb-log-backup-${todayStr()}.json`;
+  const file = new File([blob], name, { type:"application/json" });
+  if (navigator.canShare && navigator.canShare({ files:[file] }) && matchMedia("(pointer:coarse)").matches){
+    try { await navigator.share({ files:[file], title:"Climb Log backup" }); await updSettings({ lastBackupAt: Date.now() }); return true; }
+    catch (e){ if (e.name === "AbortError") return false; }
+  }
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  await updSettings({ lastBackupAt: Date.now() });
+  return true;
+}
+// Back up now, using the saved file if there is one. Must run from a tap if permission is needed.
+async function backupNow(){
+  const h = canPickFile ? await metaGet("fileHandle") : null;
+  if (h){
+    try { if (await filePermission(h, true)) { await writeToFile(h); return true; } }
+    catch (e){ console.warn("file backup failed", e); }
+  }
+  return manualExport();
+}
+const ago = t => { if (!t) return "never"; const d = Math.floor((Date.now() - t) / DAY);
+  return d <= 0 ? "today" : d === 1 ? "yesterday" : d + " days ago"; };
+
+let bannerSnoozed = false;
+async function checkBackup(){
+  const st = await getSettings(), banner = $("#bkBanner");
+  const hasData = (await getAll()).length > 0;
+  const due = st.interval > 0 && hasData && (st.lastChangeAt > st.lastBackupAt || !st.lastBackupAt) && Date.now() - st.lastBackupAt >= st.interval * DAY;
+  if (!due){ banner.classList.add("hidden"); return; }
+  // Silent path: a backup file was chosen and Chrome still allows writing to it.
+  const h = canPickFile ? await metaGet("fileHandle") : null;
+  if (h){
+    try { if (await filePermission(h, false)) { await writeToFile(h); toast("Auto-backup saved"); banner.classList.add("hidden"); return; } }
+    catch (e){ console.warn("auto-backup failed", e); }
+  }
+  if (bannerSnoozed) return;
+  $("#bkText").textContent = `Last backup: ${ago(st.lastBackupAt)}`;
+  banner.classList.remove("hidden");
+}
+$("#bkNow").onclick = async () => {
+  $("#bkNow").disabled = true;
+  try { if (await backupNow()){ toast("Backup saved"); $("#bkBanner").classList.add("hidden"); } }
+  finally { $("#bkNow").disabled = false; }
+  if (location.hash === "#/backup") viewBackup();
+};
+$("#bkLater").onclick = () => { bannerSnoozed = true; $("#bkBanner").classList.add("hidden"); };
+
 async function viewBackup(){
   setHeader("Backup", false); setTab("backup");
-  const all = await getAll();
-  let usage = "";
-  try { const e = await navigator.storage.estimate(); usage = ` · about ${(e.usage/1048576).toFixed(1)} MB used`; } catch {}
+  const all = await getAll(), st = await getSettings();
+  const h = canPickFile ? await metaGet("fileHandle") : null;
+  let usage = "", persisted = null;
+  try { const e = await navigator.storage.estimate(); usage = ` · about ${(e.usage/1048576).toFixed(1)} MB`; } catch {}
+  try { persisted = await navigator.storage.persisted(); } catch {}
+  const unsaved = st.lastChangeAt > st.lastBackupAt || !st.lastBackupAt;
   $("#app").innerHTML = `
     <div class="card" style="padding:16px">
-      <p style="margin-top:0">Your climbs are stored only on this phone${usage}. ${all.length} climbs saved.</p>
-      <p class="muted">Export a backup now and then, and before clearing Chrome's data or switching phones.</p>
-      <button class="btn primary" id="exp">Export backup file</button>
+      <p style="margin-top:0">${all.length} climb${all.length===1?"":"s"} stored on this phone${usage}.</p>
+      <div class="okline"><span class="dot ${unsaved && all.length ? "warn" : ""}"></span>
+        <span>Last backup: <b>${ago(st.lastBackupAt)}</b>${unsaved && all.length ? " · changes since then aren't backed up" : st.lastBackupAt ? " · up to date" : ""}</span></div>
+      ${persisted !== null ? `<div class="okline"><span class="dot ${persisted ? "" : "warn"}"></span><span>${persisted
+        ? "Chrome has marked this app's storage as protected, so it won't clear it on its own when space runs low."
+        : "Chrome hasn't protected this app's storage yet. Installing it to your home screen usually does that."}</span></div>` : ""}
+      <div class="sp"></div>
+      <button class="btn primary" id="exp">Back up now</button>
+    </div>
+    <div class="sp"></div>
+    <div class="card" style="padding:16px">
+      <p style="margin-top:0"><b>Automatic backup</b></p>
+      <label class="f" for="iv" style="margin-top:0">How often</label>
+      <select id="iv">
+        <option value="0">Off</option><option value="1">Every day</option><option value="3">Every 3 days</option><option value="7">Every week</option></select>
+      ${canPickFile ? `
+        <label class="f">Backup file</label>
+        <p class="muted" style="margin-top:0">${h
+          ? `Saving to <b>${esc(h.name)}</b>. Each backup overwrites that file. If Chrome asks again for permission, you'll see a reminder with a one-tap button.`
+          : `Choose where to keep the backup (for example your Documents or Download folder). The app will overwrite that one file each time.`}</p>
+        <button class="btn" id="pick">${h ? "Change backup file" : "Choose backup file"}</button>`
+      : `<p class="muted">When a backup is due and you've logged something new, the app shows a reminder with a one-tap <b>Back up</b> button. Save it to Google Drive or your Files app.</p>`}
     </div>
     <div class="sp"></div>
     <div class="card" style="padding:16px">
       <p style="margin-top:0"><b>Restore from backup</b></p>
       <p class="muted">Adds the climbs in a backup file. Climbs already on this phone are kept, and any with the same entry are updated.</p>
-      <label class="btn">Choose backup file<input type="file" id="imp" accept=".json,application/json" class="hidden"></label>
+      <label class="btn">Choose file to restore<input type="file" id="imp" accept=".json,application/json" class="hidden"></label>
     </div>
     <div class="sp"></div>
     <p class="muted" style="text-align:center">Climb Log · works offline</p>`;
+  $("#iv").value = String(st.interval);
+  $("#iv").onchange = async e => { await updSettings({ interval: Number(e.target.value) }); toast("Saved"); checkBackup(); };
   $("#exp").onclick = async () => {
-    $("#exp").textContent = "Preparing…";
-    const out = [];
-    for (const c of await getAll()){
-      out.push({ ...c, photo: c.photo ? await blobToDataURL(c.photo) : null, thumb: c.thumb ? await blobToDataURL(c.thumb) : null });
-    }
-    const blob = new Blob([JSON.stringify({ app:"climblog", version:1, exportedAt:new Date().toISOString(), climbs: out })], { type:"application/json" });
-    const name = `climb-log-backup-${todayStr()}.json`;
-    const file = new File([blob], name, { type:"application/json" });
-    if (navigator.canShare && navigator.canShare({ files:[file] }) && matchMedia("(pointer:coarse)").matches){
-      try { await navigator.share({ files:[file], title:"Climb Log backup" }); $("#exp").textContent = "Export backup file"; return; }
-      catch (e){ if (e.name === "AbortError"){ $("#exp").textContent = "Export backup file"; return; } }
-    }
-    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name;
-    document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-    $("#exp").textContent = "Export backup file"; toast("Backup saved");
+    $("#exp").textContent = "Saving…"; $("#exp").disabled = true;
+    try { if (await backupNow()) { toast("Backup saved"); $("#bkBanner").classList.add("hidden"); } }
+    catch { toast("Backup failed"); }
+    viewBackup();
+  };
+  if (canPickFile) $("#pick").onclick = async () => {
+    try {
+      const handle = await showSaveFilePicker({ suggestedName: AUTO_NAME, types:[{ description:"Climb Log backup", accept:{ "application/json":[".json"] } }] });
+      await metaSet("fileHandle", handle);
+      await writeToFile(handle); toast("Backup saved to " + handle.name);
+      $("#bkBanner").classList.add("hidden");
+    } catch (e){ if (e.name !== "AbortError") toast("Couldn't use that file"); }
+    viewBackup();
   };
   $("#imp").onchange = async e => {
     const file = e.target.files[0]; if (!file) return;
@@ -534,8 +654,9 @@ async function route(){
   if (view === "backup") return viewBackup();
   return viewHome();
 }
-addEventListener("hashchange", route);
-route();
+addEventListener("hashchange", () => { route(); checkBackup(); });
+route(); checkBackup();
+document.addEventListener("visibilitychange", () => { if (!document.hidden) checkBackup(); });
 
 if ("serviceWorker" in navigator && location.protocol !== "file:"){
   navigator.serviceWorker.register("sw.js").catch(() => {});
