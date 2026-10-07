@@ -157,10 +157,11 @@ svg{display:block}
 "use strict";
 /* ---------- constants ---------- */
 const TYPES = { boulder:"Boulder", lead:"Lead", toprope:"Top rope" };
-const BOULDER_GRADES = ["V0","V1","V2-V3","V2-V4","V3-V5","V4-V6","V5-V7","V6-V8","V7-V9","V9-V10"];
+const BOULDER_GRADES = ["VB","V0","V1","V2-V3","V2-V4","V3-V5","V4-V6","V5-V7","V6-V8","V7-V9","V9-V10"];
 const ROPE_GRADES = ["5.10a","5.10b","5.10c","5.10d","5.11a","5.11b","5.11c","5.11d",
                      "5.12a","5.12b","5.12c","5.12d","5.13a","5.13b","5.13c","5.13d"];
 const ATTEMPTS = [1,2,3,4,5,6,7,8,9,10];
+const GYMS = ["Ascend Point Breeze","Ascend South Side","Ascend Erie","Iron City Boulders"];
 const COMP_GRADES = ["C1","C2","C3","C4","C5"];
 const STYLES = { trad:"Traditional", comp:"Comp" };
 const isComp = c => c.type === "boulder" && c.style === "comp";
@@ -296,11 +297,13 @@ async function viewForm(id){
   let c = editing ? await getOne(id) : null;
   if (editing && !c){ location.replace("#/history"); return; }
   const last = !editing ? (await getAll()).sort((a,b)=>b.createdAt-a.createdAt)[0] : null;
-  const f = c ? { ...c, style: c.style || "trad" } : { type: last ? last.type : "boulder", style: (last && last.style) || "trad", grade:null, attempts:1, notes:"", date: todayStr(), photo:null, thumb:null };
+  const f = c ? { ...c, style: c.style || "trad", gym: c.gym || GYMS[0] } : { gym: GYMS[0], type: last ? last.type : "boulder", style: (last && last.style) || "trad", grade:null, attempts:1, notes:"", date: todayStr(), photo:null, thumb:null };
   setHeader(editing ? "Edit climb" : "Log climb", editing); setTab(editing ? "history" : "log");
 
   const render = () => {
     $("#app").innerHTML = `
+      <label class="f" for="gym">Gym</label>
+      <select id="gym">${GYMS.map(g => `<option value="${esc(g)}"${f.gym===g?" selected":""}>${esc(g)}</option>`).join("")}</select>
       <label class="f">Type</label>
       <div class="seg" id="typeSeg">${Object.entries(TYPES).map(([k,v]) => `<button type="button" data-v="${k}" aria-pressed="${f.type===k}">${v}</button>`).join("")}</div>
       <div class="${f.type === "boulder" ? "" : "hidden"}">
@@ -358,7 +361,7 @@ async function viewForm(id){
       if (!f.grade){ $("#gradeErr").classList.remove("hidden"); $("#gradeChips").scrollIntoView({behavior:"smooth", block:"center"}); return; }
       if (!f.date) f.date = todayStr();
       const now = Date.now();
-      const rec = { id: f.id || uid(), type:f.type, style: f.type === "boulder" ? f.style : null, grade:f.grade, attempts:f.attempts, notes:f.notes.trim(), date:f.date,
+      const rec = { id: f.id || uid(), gym:f.gym, type:f.type, style: f.type === "boulder" ? f.style : null, grade:f.grade, attempts:f.attempts, notes:f.notes.trim(), date:f.date,
                     photo:f.photo || null, thumb:f.thumb || null, createdAt: f.createdAt || now, updatedAt: now };
       $("#save").disabled = true;
       await putOne(rec);
@@ -367,7 +370,7 @@ async function viewForm(id){
     };
     if (editing) $("#del").onclick = () => deleteClimb(f.id);
   };
-  const saveText = () => { const n = $("#notes"), d = $("#date"); if (n) f.notes = n.value; if (d) f.date = d.value; };
+  const saveText = () => { const n = $("#notes"), d = $("#date"), g = $("#gym"); if (n) f.notes = n.value; if (d) f.date = d.value; if (g) f.gym = g.value; };
   render();
 }
 
@@ -388,6 +391,7 @@ async function viewDetail(id){
       <dt>Grade</dt><dd>${gradeHTML(c.grade, c.type, c.style)}${badgeHTML(c)}</dd>
       <dt>Attempts</dt><dd>${attLong(c.attempts)}</dd>
       <dt>Date</dt><dd>${fmtDate(c.date, true)}</dd>
+      ${c.gym ? `<dt>Gym</dt><dd>${esc(c.gym)}</dd>` : ""}
       ${c.notes ? `<dt>Notes</dt><dd class="notes">${esc(c.notes)}</dd>` : ""}
     </dl>
     <div class="sp"></div>
@@ -403,7 +407,7 @@ async function viewHistory(){
   const all = await getAll();
   $("#app").innerHTML = `
     <div class="toolbar">
-      <input type="search" id="q" placeholder="Search grade or notes" value="${esc(hist.q)}">
+      <input type="search" id="q" placeholder="Search grade, gym or notes" value="${esc(hist.q)}">
       <div class="seg" id="tSeg">${[["all","All"],...Object.entries(TYPES)].map(([k,v]) => `<button data-v="${k}" aria-pressed="${hist.type===k}">${v}</button>`).join("")}</div>
       <select id="style" aria-label="Boulder style" class="hidden">
         <option value="any">Traditional and comp</option><option value="trad">Traditional only</option><option value="comp">Comp only</option></select>
@@ -463,7 +467,7 @@ async function viewHistory(){
       if (hist.att === "le3" && c.attempts > 3) return false;
       if (hist.att === "ge4" && c.attempts < 4) return false;
       if (from && c.date < from) return false;
-      if (q && ![gradeText(c), c.notes || "", TYPES[c.type], isComp(c) ? "comp chili" : c.type === "boulder" ? "traditional" : ""].join(" ").toLowerCase().includes(q)) return false;
+      if (q && ![gradeText(c), c.notes || "", c.gym || "", TYPES[c.type], isComp(c) ? "comp chili" : c.type === "boulder" ? "traditional" : ""].join(" ").toLowerCase().includes(q)) return false;
       return true;
     });
     const byDate = (a,b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt;

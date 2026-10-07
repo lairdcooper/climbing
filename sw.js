@@ -1,6 +1,6 @@
 // Climb Log service worker: keeps the app available offline.
 // Bump VERSION whenever you upload changed files.
-const VERSION = "climblog-v3";
+const VERSION = "climblog-v4";
 const ASSETS = ["./", "./index.html", "./manifest.webmanifest", "./icon-192.png", "./icon-512.png", "./icon-maskable-512.png"];
 
 self.addEventListener("install", e => {
