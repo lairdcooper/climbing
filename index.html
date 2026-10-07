@@ -13,14 +13,14 @@
 :root{
   --bg:#f6f5f2; --surface:#ffffff; --surface-2:#efede8; --text:#1c1b19; --muted:#6b6862;
   --line:#e2dfd8; --accent:#d9480f; --accent-ink:#ffffff; --danger:#c92a2a;
-  --boulder:#d9480f; --lead:#1c7ed6; --toprope:#2f9e44;
+  --boulder:#d9480f; --lead:#1c7ed6; --toprope:#2f9e44; --sent:#2b8a3e; --sent-ink:#ffffff;
   --radius:14px; --shadow:0 1px 2px rgba(0,0,0,.06),0 4px 14px rgba(0,0,0,.06);
 }
 @media (prefers-color-scheme: dark){
   :root{
     --bg:#131211; --surface:#1e1c1a; --surface-2:#2a2825; --text:#f1efe9; --muted:#a39f96;
     --line:#35322e; --accent:#ff7a3d; --accent-ink:#1a0d05; --danger:#ff6b6b;
-    --boulder:#ff7a3d; --lead:#4dabf7; --toprope:#51cf66;
+    --boulder:#ff7a3d; --lead:#4dabf7; --toprope:#51cf66; --sent:#51cf66; --sent-ink:#0b1f0f;
     --shadow:0 1px 2px rgba(0,0,0,.4);
   }
 }
@@ -75,7 +75,16 @@ textarea{min-height:90px;resize:vertical}
 .b-boulder{background:var(--boulder)} .b-comp{background:transparent;color:var(--boulder)!important;border:1.5px solid var(--boulder);padding:1px 6px} .b-lead{background:var(--lead)} .b-toprope{background:var(--toprope)}
 @media (prefers-color-scheme: dark){.badge{color:#111}}
 .att{font-size:13px;font-weight:600;color:var(--muted);text-align:right;flex:none}
-.att.flash{color:var(--accent)}
+.att .st{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;margin-top:2px}
+.att .st.sent{color:var(--sent)}
+.item .g .swatch{width:12px;height:12px;margin-right:6px;vertical-align:0}
+.stepper{display:flex;align-items:center;gap:14px}
+.stepper button{width:52px;height:52px;border-radius:50%;border:1px solid var(--line);background:var(--surface);cursor:pointer;
+  display:grid;place-items:center;color:var(--text);flex:none}
+.stepper button:disabled{opacity:.35;cursor:default}
+.stepper output{min-width:64px;text-align:center;font-size:30px;font-weight:700;font-variant-numeric:tabular-nums}
+.btn.send{margin-top:14px;border:2px solid var(--sent);color:var(--sent)}
+.btn.send[aria-pressed="true"]{background:var(--sent);color:var(--sent-ink)}
 .dhead{font-size:13px;font-weight:600;color:var(--muted);margin:14px 2px 2px}
 .toolbar{display:flex;flex-direction:column;gap:10px;margin-bottom:12px}
 .toolbar .row select{padding:10px}
@@ -172,7 +181,7 @@ const TYPES = { boulder:"Boulder", lead:"Lead", toprope:"Top rope" };
 const BOULDER_GRADES = ["VB","V0","V1","V2-V3","V2-V4","V3-V5","V4-V6","V5-V7","V6-V8","V7-V9","V9-V10"];
 const ROPE_GRADES = ["5.10a","5.10b","5.10c","5.10d","5.11a","5.11b","5.11c","5.11d",
                      "5.12a","5.12b","5.12c","5.12d","5.13a","5.13b","5.13c","5.13d"];
-const ATTEMPTS = [1,2,3,4,5,6,7,8,9,10];
+const MAX_ATTEMPTS = 99;
 const GYMS = ["Ascend Point Breeze","Ascend South Side","Ascend Erie","Iron City Boulders"];
 const COLORS = ["Red","Orange","Yellow","Green","Blue","Purple","Pink","White","Black"];
 const COMP_GRADES = ["C1","C2","C3","C4","C5"];
@@ -188,8 +197,13 @@ const chilis = n => `<span class="chilis" role="img" aria-label="${n} chili">${C
 const gradeHTML = (grade, type, style) => (type === "boulder" && style === "comp") ? chilis(Number(String(grade).slice(1))) : esc(grade);
 const gradeText = c => isComp(c) ? `${c.grade.slice(1)}-chili comp` : c.grade;
 const badgeHTML = c => `<span class="badge b-${c.type}">${TYPES[c.type]}</span>${isComp(c) ? `<span class="badge b-comp">Comp</span>` : ""}`;
-const attLabel = n => n === 1 ? "Flash" : n >= 10 ? "10+" : String(n);
-const attLong = n => n === 1 ? "Flash" : n >= 10 ? "10+ attempts" : n + " attempts";
+const attLong = n => n === 1 ? "1 attempt" : n + " attempts";
+// Climbs logged before projects existed were all sends, so only an explicit false means "project".
+const isSent = c => c.sent !== false;
+// Stamp a climb as touched today. c.days lists every day it was added or changed (for the Gym days stat).
+const touch = c => ({ ...c, updatedAt: Date.now(), days: [...new Set([...(c.days || []), todayStr()])] });
+// Days the climber was active: each climb's date, send date, and every day it was added or changed.
+const gymDays = all => new Set(all.flatMap(c => [c.date, c.sentDate, ...(c.days || [])].filter(Boolean))).size;
 
 /* ---------- storage (IndexedDB) ---------- */
 let _db;
@@ -305,39 +319,38 @@ const itemHTML = c => `
   <a class="item card" href="#/climb/${c.id}">
     ${c.thumb ? `<img class="thumb" src="${objUrl(c.thumb)}" alt="">` : `<div class="thumb"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M3 20l6-10 4 6 3-4 5 8z"/></svg></div>`}
     <div class="main">
-      <div class="g">${gradeHTML(c.grade, c.type, c.style)}${badgeHTML(c)}</div>
+      <div class="g">${c.color ? swatchHTML(c.color) : ""}${gradeHTML(c.grade, c.type, c.style)}${badgeHTML(c)}</div>
       <div class="sub">${c.notes ? esc(c.notes) : fmtDate(c.date)}</div>
     </div>
-    <div class="att ${c.attempts===1?"flash":""}">${attLabel(c.attempts)}</div>
+    <div class="att">${attLong(c.attempts)}<div class="st ${isSent(c) ? "sent" : ""}">${isSent(c) ? "✓ Sent" : "Project"}</div></div>
   </a>`;
 
 /* ---------- views ---------- */
 async function viewHome(){
   setHeader("Climb Log", false); setTab("home");
   const all = await getAll();
-  const now = new Date(), ym = now.getFullYear()+"-"+String(now.getMonth()+1).padStart(2,"0");
-  const sessions = new Set(all.map(c => c.date)).size;
-  const month = all.filter(c => c.date.startsWith(ym)).length;
-  const best = k => { const xs = all.filter(c => catOf(c) === k); if (!xs.length) return "—";
+  const best = k => { const xs = all.filter(c => isSent(c) && catOf(c) === k); if (!xs.length) return "—";
     const b = xs.reduce((a,b) => gradeIdx(b) > gradeIdx(a) ? b : a); return gradeHTML(b.grade, b.type, b.style); };
-  const recent = [...all].sort((a,b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt).slice(0,5);
+  // most recently touched first, so a project you just tried moves to the top
+  const projects = all.filter(c => !isSent(c)).sort((a,b) => b.updatedAt - a.updatedAt);
   $("#app").innerHTML = `
     <a class="btn primary big" href="#/log">
       <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
       Log new climb</a>
     <div class="stats">
-      <div class="stat card"><div class="v">${all.length}</div><div class="l">Climbs</div></div>
-      <div class="stat card"><div class="v">${sessions}</div><div class="l">Gym days</div></div>
-      <div class="stat card"><div class="v">${month}</div><div class="l">This month</div></div>
+      <div class="stat card"><div class="v">${all.length}</div><div class="l">Logged climbs</div></div>
+      <div class="stat card"><div class="v">${all.filter(isSent).length}</div><div class="l">Sent climbs</div></div>
+      <div class="stat card"><div class="v">${gymDays(all)}</div><div class="l">Gym days</div></div>
     </div>
     <h2>Hardest sends</h2>
     <div class="bests">
       ${Object.keys(CATS).map(k => `<div class="stat card"><div class="v">${best(k)}</div><div class="l">${CATS[k]}</div></div>`).join("")}
     </div>
-    <h2>Recent</h2>
-    ${recent.length ? `<div class="list">${recent.map(itemHTML).join("")}</div>
-      <div class="sp"></div><a class="btn" href="#/history">See all climbs</a>`
-      : `<div class="empty card">No climbs yet. Tap <b>Log new climb</b> to add your first.</div>`}`;
+    <h2>Recent projects</h2>
+    ${projects.length ? `<div class="list">${projects.slice(0,10).map(itemHTML).join("")}</div>
+      <div class="sp"></div><a class="btn" href="#/history" id="allProj">${projects.length > 10 ? `See all ${projects.length} projects` : "See all projects"}</a>`
+      : `<div class="empty card">${all.length ? "No open projects." : "No climbs yet."} Tap <b>Log new climb</b> when you start one.</div>`}`;
+  if (projects.length) $("#allProj").onclick = () => { hist.status = "projects"; };
 }
 
 async function viewForm(id){
@@ -345,7 +358,7 @@ async function viewForm(id){
   let c = editing ? await getOne(id) : null;
   if (editing && !c){ location.replace("#/history"); return; }
   const last = !editing ? (await getAll()).sort((a,b)=>b.createdAt-a.createdAt)[0] : null;
-  const f = c ? { ...c, style: c.style || "trad", gym: c.gym || GYMS[0] } : { gym: (last && last.gym) || GYMS[0], type: last ? last.type : "boulder", style: (last && last.style) || "trad", grade:null, attempts:1, notes:"", date: todayStr(), photo:null, thumb:null };
+  const f = c ? { ...c, style: c.style || "trad", gym: c.gym || GYMS[0], sent: isSent(c) } : { gym: (last && last.gym) || GYMS[0], type: last ? last.type : "boulder", style: (last && last.style) || "trad", grade:null, attempts:1, sent:false, sentDate:null, notes:"", date: todayStr(), photo:null, thumb:null };
   const gyms = await optList(GYMS, "gym"), colors = await optList(COLORS, "color");
   setHeader(editing ? "Edit climb" : "Log climb", editing); setTab(editing ? "history" : "log");
 
@@ -367,7 +380,12 @@ async function viewForm(id){
       <div class="chips" id="gradeChips">${gradesFor(f.type, f.style).map(g => `<button type="button" class="chip" data-v="${g}" aria-pressed="${f.grade===g}">${gradeHTML(g, f.type, f.style)}</button>`).join("")}</div>
       <div class="err hidden" id="gradeErr">Pick a grade.</div>
       <label class="f">Number of attempts</label>
-      <div class="chips" id="attChips">${ATTEMPTS.map(n => `<button type="button" class="chip" data-v="${n}" aria-pressed="${f.attempts===n}">${attLabel(n)}</button>`).join("")}</div>
+      <div class="stepper">
+        <button type="button" id="attDown" aria-label="One fewer attempt"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M5 12h14"/></svg></button>
+        <output id="attN" aria-live="polite">${f.attempts}</output>
+        <button type="button" id="attUp" aria-label="One more attempt"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+      </div>
+      <button type="button" class="btn big send" id="sendBtn" aria-pressed="${f.sent}">${f.sent ? "✓ Sent" : "Mark as sent"}</button>
       <label class="f" for="date">Date</label>
       <input type="date" id="date" value="${f.date}" max="${todayStr()}">
       <label class="f" for="notes">Notes</label>
@@ -414,9 +432,13 @@ async function viewForm(id){
     $("#gradeChips").onclick = e => { const b = e.target.closest("button"); if (!b) return;
       f.grade = b.dataset.v; $("#gradeErr").classList.add("hidden");
       $("#gradeChips").querySelectorAll(".chip").forEach(x => x.setAttribute("aria-pressed", x === b)); };
-    $("#attChips").onclick = e => { const b = e.target.closest("button"); if (!b) return;
-      f.attempts = Number(b.dataset.v);
-      $("#attChips").querySelectorAll(".chip").forEach(x => x.setAttribute("aria-pressed", x === b)); };
+    const setAtt = n => { f.attempts = Math.max(1, Math.min(MAX_ATTEMPTS, n)); $("#attN").textContent = f.attempts;
+      $("#attDown").disabled = f.attempts <= 1; $("#attUp").disabled = f.attempts >= MAX_ATTEMPTS; };
+    setAtt(f.attempts);
+    $("#attDown").onclick = () => setAtt(f.attempts - 1);
+    $("#attUp").onclick = () => setAtt(f.attempts + 1);
+    $("#sendBtn").onclick = () => { f.sent = !f.sent;
+      $("#sendBtn").setAttribute("aria-pressed", f.sent); $("#sendBtn").textContent = f.sent ? "✓ Sent" : "Mark as sent"; };
     $("#photo").onchange = async e => {
       const file = e.target.files[0]; if (!file) return;
       $("#photoLbl").textContent = "Processing…";
@@ -431,12 +453,12 @@ async function viewForm(id){
       saveText();
       if (!f.grade){ $("#gradeErr").classList.remove("hidden"); $("#gradeChips").scrollIntoView({behavior:"smooth", block:"center"}); return; }
       if (!f.date) f.date = todayStr();
-      const now = Date.now();
-      const rec = { id: f.id || uid(), gym:f.gym, type:f.type, style: f.type === "boulder" ? f.style : null, color:f.color || null, grade:f.grade, attempts:f.attempts, notes:f.notes.trim(), date:f.date,
-                    photo:f.photo || null, thumb:f.thumb || null, createdAt: f.createdAt || now, updatedAt: now };
+      const rec = touch({ id: f.id || uid(), gym:f.gym, type:f.type, style: f.type === "boulder" ? f.style : null, color:f.color || null, grade:f.grade, attempts:f.attempts,
+                    sent:f.sent, sentDate: f.sent ? (f.sentDate || todayStr()) : null, notes:f.notes.trim(), date:f.date,
+                    photo:f.photo || null, thumb:f.thumb || null, days: f.days, createdAt: f.createdAt || Date.now() });
       $("#save").disabled = true;
       await putOne(rec);
-      toast(editing ? "Changes saved" : "Climb logged");
+      toast(editing ? "Changes saved" : f.sent ? "Send logged" : "Project saved");
       location.replace(editing ? "#/climb/" + rec.id : "#/");
     };
     if (editing) $("#del").onclick = () => deleteClimb(f.id);
@@ -460,19 +482,33 @@ async function viewDetail(id){
     ${c.photo ? `<img src="${objUrl(c.photo)}" alt="Route photo">` : ""}
     <dl class="kv card">
       <dt>Grade</dt><dd>${gradeHTML(c.grade, c.type, c.style)}${badgeHTML(c)}</dd>
+      <dt>Status</dt><dd>${isSent(c) ? `<span style="color:var(--sent)">✓ Sent</span>${c.sentDate ? ` · ${fmtDate(c.sentDate)}` : ""}` : "Project"}</dd>
       <dt>Attempts</dt><dd>${attLong(c.attempts)}</dd>
-      <dt>Date</dt><dd>${fmtDate(c.date, true)}</dd>
+      <dt>${isSent(c) && c.sentDate ? "First tried" : "Date"}</dt><dd>${fmtDate(c.date, true)}</dd>
       ${c.gym ? `<dt>Gym</dt><dd>${esc(c.gym)}</dd>` : ""}
       ${c.color ? `<dt>Color</dt><dd>${swatchHTML(c.color)}${esc(c.color)}</dd>` : ""}
       ${c.notes ? `<dt>Notes</dt><dd class="notes">${esc(c.notes)}</dd>` : ""}
     </dl>
+    ${isSent(c) ? "" : `<div class="sp"></div>
+    <div class="row"><button class="btn big" id="plusOne">+1 attempt</button><button class="btn big send" id="markSent">Mark as sent</button></div>`}
     <div class="sp"></div>
     <div class="row"><a class="btn" href="#/edit/${c.id}">Edit</a><button class="btn danger" id="del">Delete</button></div>
   </div>`;
   $("#del").onclick = () => deleteClimb(c.id);
+  if (!isSent(c)){
+    $("#plusOne").onclick = async () => {
+      if (c.attempts >= MAX_ATTEMPTS) return;
+      await putOne(touch({ ...c, attempts: c.attempts + 1 }));
+      toast(`Attempt ${c.attempts + 1} logged`); viewDetail(id);
+    };
+    $("#markSent").onclick = async () => {
+      await putOne(touch({ ...c, sent:true, sentDate: todayStr() }));
+      toast("Sent! Nice work"); viewDetail(id);
+    };
+  }
 }
 
-const hist = { q:"", type:"all", style:"any", grade:"any", att:"any", period:"all", sort:"new" };
+const hist = { q:"", status:"all", type:"all", style:"any", grade:"any", att:"any", period:"all", sort:"new" };
 try { Object.assign(hist, JSON.parse(sessionStorage.getItem("hist") || "{}")); } catch {}
 async function viewHistory(){
   setHeader("History", false); setTab("history");
@@ -480,13 +516,14 @@ async function viewHistory(){
   $("#app").innerHTML = `
     <div class="toolbar">
       <input type="search" id="q" placeholder="Search grade, gym, color or notes" value="${esc(hist.q)}">
+      <div class="seg" id="sSeg">${[["projects","Projects"],["sent","Sent"],["all","All"]].map(([k,v]) => `<button data-v="${k}" aria-pressed="${hist.status===k}">${v}</button>`).join("")}</div>
       <div class="seg" id="tSeg">${[["all","All"],...Object.entries(TYPES)].map(([k,v]) => `<button data-v="${k}" aria-pressed="${hist.type===k}">${v}</button>`).join("")}</div>
       <select id="style" aria-label="Boulder style" class="hidden">
         <option value="any">Traditional and comp</option><option value="trad">Traditional only</option><option value="comp">Comp only</option></select>
       <div class="row">
         <select id="grade" aria-label="Grade"></select>
         <select id="att" aria-label="Attempts">
-          <option value="any">Any attempts</option><option value="flash">Flash only</option>
+          <option value="any">Any attempts</option><option value="flash">Sent on 1st attempt</option>
           <option value="le3">3 or fewer</option><option value="ge4">4 or more</option></select>
       </div>
       <div class="row">
@@ -528,6 +565,8 @@ async function viewHistory(){
     else if (hist.period !== "all"){ const d = new Date(); d.setDate(d.getDate() - Number(hist.period) + 1);
       from = d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); }
     let xs = all.filter(c => {
+      if (hist.status === "projects" && isSent(c)) return false;
+      if (hist.status === "sent" && !isSent(c)) return false;
       if (hist.type !== "all" && c.type !== hist.type) return false;
       if (hist.style === "comp" && !isComp(c)) return false;
       if (hist.style === "trad" && isComp(c)) return false;
@@ -535,11 +574,11 @@ async function viewHistory(){
         if (hist.grade.startsWith("min:")){ if (gradeIdx(c) < gradesFor(c.type, c.style).indexOf(hist.grade.slice(4))) return false; }
         else if (c.grade !== hist.grade) return false;
       }
-      if (hist.att === "flash" && c.attempts !== 1) return false;
+      if (hist.att === "flash" && !(isSent(c) && c.attempts === 1)) return false;
       if (hist.att === "le3" && c.attempts > 3) return false;
       if (hist.att === "ge4" && c.attempts < 4) return false;
       if (from && c.date < from) return false;
-      if (q && ![gradeText(c), c.notes || "", c.gym || "", c.color || "", TYPES[c.type], isComp(c) ? "comp chili" : c.type === "boulder" ? "traditional" : ""].join(" ").toLowerCase().includes(q)) return false;
+      if (q && ![gradeText(c), c.notes || "", c.gym || "", c.color || "", isSent(c) ? "sent" : "project", TYPES[c.type], isComp(c) ? "comp chili" : c.type === "boulder" ? "traditional" : ""].join(" ").toLowerCase().includes(q)) return false;
       return true;
     });
     const byDate = (a,b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt;
@@ -560,6 +599,8 @@ async function viewHistory(){
     $("#list").innerHTML = html;
   };
   $("#q").oninput = e => { hist.q = e.target.value; draw(); };
+  $("#sSeg").onclick = e => { const b = e.target.closest("button"); if (!b) return; hist.status = b.dataset.v;
+    $("#sSeg").querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", x === b)); draw(); };
   $("#tSeg").onclick = e => { const b = e.target.closest("button"); if (!b) return; hist.type = b.dataset.v;
     $("#tSeg").querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", x === b)); fillGrades(); draw(); };
   $("#style").onchange = e => { hist.style = e.target.value; fillGrades(); draw(); };
