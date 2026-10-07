@@ -115,6 +115,9 @@ svg{display:block}
 .chilis{display:inline-flex;gap:1px;vertical-align:-4px}
 .chili{width:22px;height:22px;display:inline-block}
 .chip .chilis{vertical-align:-5px}
+.swatch{display:inline-block;width:14px;height:14px;border-radius:50%;border:1.5px solid rgba(128,128,128,.65);vertical-align:-2px;margin-right:6px}
+.swatch.none{background:repeating-linear-gradient(45deg,var(--surface-2) 0 3px,var(--muted) 3px 4px)}
+.chip .swatch{margin-left:-2px}
 .stat .v .chili{width:18px;height:18px}
 .bests{grid-template-columns:repeat(2,1fr)}
 </style>
@@ -152,6 +155,15 @@ svg{display:block}
   <p id="cfText">This can't be undone.</p>
   <div class="row"><button class="btn" id="cfNo">Cancel</button><button class="btn primary" id="cfYes">Delete</button></div>
 </dialog>
+<dialog id="addDlg">
+  <h3 id="addTitle">Add new</h3>
+  <form method="dialog" id="addForm">
+    <input type="text" id="addName" maxlength="60" autocomplete="off">
+    <div class="err hidden" id="addErr">Enter a name.</div>
+    <div class="sp"></div>
+    <div class="row"><button type="button" class="btn" id="addNo">Cancel</button><button class="btn primary" id="addYes">Add</button></div>
+  </form>
+</dialog>
 
 <script>
 "use strict";
@@ -162,6 +174,7 @@ const ROPE_GRADES = ["5.10a","5.10b","5.10c","5.10d","5.11a","5.11b","5.11c","5.
                      "5.12a","5.12b","5.12c","5.12d","5.13a","5.13b","5.13c","5.13d"];
 const ATTEMPTS = [1,2,3,4,5,6,7,8,9,10];
 const GYMS = ["Ascend Point Breeze","Ascend South Side","Ascend Erie","Iron City Boulders"];
+const COLORS = ["Red","Orange","Yellow","Green","Blue","Purple","Pink","White","Black"];
 const COMP_GRADES = ["C1","C2","C3","C4","C5"];
 const STYLES = { trad:"Traditional", comp:"Comp" };
 const isComp = c => c.type === "boulder" && c.style === "comp";
@@ -236,6 +249,41 @@ function confirmDlg(title, text, yes){
     d.showModal();
   });
 }
+// Built-in choices, then ones the user added, then any found on saved climbs (e.g. from a restored backup).
+// field is the climb property ("gym", "color"); user additions are kept in meta under field + "s".
+async function optList(defaults, field){
+  const seen = new Set(), out = [];
+  for (const v of [...defaults, ...(await metaGet(field + "s") || []), ...(await getAll()).map(c => c[field])])
+    if (v && !seen.has(v.toLowerCase())){ seen.add(v.toLowerCase()); out.push(v); }
+  return out;
+}
+// Ask for a new choice. Resolves to the name (saved for next time), or null if cancelled.
+function addOptDlg(field, list){
+  return new Promise(res => {
+    const d = $("#addDlg"), inp = $("#addName");
+    $("#addTitle").textContent = `Add new ${field}`; inp.placeholder = `${field[0].toUpperCase() + field.slice(1)} name`;
+    $("#addErr").textContent = `Enter a ${field} name.`;
+    inp.value = ""; $("#addErr").classList.add("hidden");
+    const done = v => { d.close(); res(v); };
+    $("#addNo").onclick = () => done(null); d.oncancel = () => res(null);
+    $("#addForm").onsubmit = async e => {
+      e.preventDefault();
+      const name = inp.value.trim().replace(/\s+/g, " ");
+      if (!name){ $("#addErr").classList.remove("hidden"); inp.focus(); return; }
+      const match = list.find(v => v.toLowerCase() === name.toLowerCase());
+      if (match) return done(match);
+      const custom = await metaGet(field + "s") || [];
+      await metaSet(field + "s", [...custom, name]);
+      done(name);
+    };
+    d.showModal(); inp.focus();
+  });
+}
+// Swatch for a hold color; names the browser doesn't recognize get a striped placeholder.
+function swatchHTML(color){
+  const css = String(color).toLowerCase().replace(/\s+/g, "");
+  return CSS.supports("color", css) ? `<span class="swatch" style="background:${css}"></span>` : `<span class="swatch none"></span>`;
+}
 async function resizeImage(file, max, quality){
   let bmp;
   try { bmp = await createImageBitmap(file, { imageOrientation:"from-image" }); } catch { bmp = await createImageBitmap(file); }
@@ -297,19 +345,24 @@ async function viewForm(id){
   let c = editing ? await getOne(id) : null;
   if (editing && !c){ location.replace("#/history"); return; }
   const last = !editing ? (await getAll()).sort((a,b)=>b.createdAt-a.createdAt)[0] : null;
-  const f = c ? { ...c, style: c.style || "trad", gym: c.gym || GYMS[0] } : { gym: GYMS[0], type: last ? last.type : "boulder", style: (last && last.style) || "trad", grade:null, attempts:1, notes:"", date: todayStr(), photo:null, thumb:null };
+  const f = c ? { ...c, style: c.style || "trad", gym: c.gym || GYMS[0] } : { gym: (last && last.gym) || GYMS[0], type: last ? last.type : "boulder", style: (last && last.style) || "trad", grade:null, attempts:1, notes:"", date: todayStr(), photo:null, thumb:null };
+  const gyms = await optList(GYMS, "gym"), colors = await optList(COLORS, "color");
   setHeader(editing ? "Edit climb" : "Log climb", editing); setTab(editing ? "history" : "log");
 
   const render = () => {
     $("#app").innerHTML = `
       <label class="f" for="gym">Gym</label>
-      <select id="gym">${GYMS.map(g => `<option value="${esc(g)}"${f.gym===g?" selected":""}>${esc(g)}</option>`).join("")}</select>
+      <select id="gym">${gyms.map(g => `<option value="${esc(g)}"${f.gym===g?" selected":""}>${esc(g)}</option>`).join("")}
+        <option value="__new">+ Add new gym…</option></select>
       <label class="f">Type</label>
       <div class="seg" id="typeSeg">${Object.entries(TYPES).map(([k,v]) => `<button type="button" data-v="${k}" aria-pressed="${f.type===k}">${v}</button>`).join("")}</div>
       <div class="${f.type === "boulder" ? "" : "hidden"}">
         <label class="f">Style</label>
         <div class="seg" id="styleSeg">${Object.entries(STYLES).map(([k,v]) => `<button type="button" data-v="${k}" aria-pressed="${f.style===k}">${v}</button>`).join("")}</div>
       </div>
+      <label class="f">Color</label>
+      <div class="chips" id="colorChips">${colors.map(v => `<button type="button" class="chip" data-v="${esc(v)}" aria-pressed="${f.color===v}">${swatchHTML(v)}${esc(v)}</button>`).join("")}
+        <button type="button" class="chip" data-new="1">+ Add new</button></div>
       <label class="f">Grade</label>
       <div class="chips" id="gradeChips">${gradesFor(f.type, f.style).map(g => `<button type="button" class="chip" data-v="${g}" aria-pressed="${f.grade===g}">${gradeHTML(g, f.type, f.style)}</button>`).join("")}</div>
       <div class="err hidden" id="gradeErr">Pick a grade.</div>
@@ -318,7 +371,7 @@ async function viewForm(id){
       <label class="f" for="date">Date</label>
       <input type="date" id="date" value="${f.date}" max="${todayStr()}">
       <label class="f" for="notes">Notes</label>
-      <textarea id="notes" placeholder="Wall, hold color, beta, how it felt…">${esc(f.notes)}</textarea>
+      <textarea id="notes" placeholder="Wall, beta, how it felt…">${esc(f.notes)}</textarea>
       <label class="f">Photo</label>
       <div class="photo-pick">
         <img class="photo-prev ${f.photo ? "" : "hidden"}" id="prev" src="${f.photo ? objUrl(f.photo) : ""}" alt="">
@@ -336,6 +389,24 @@ async function viewForm(id){
       ${editing ? `<div class="sp"></div><button class="btn danger" id="del">Delete climb</button>` : ""}
       <div class="sp"></div>`;
 
+    $("#gym").onchange = async e => {
+      if (e.target.value !== "__new"){ f.gym = e.target.value; return; }
+      saveText(); e.target.value = f.gym;
+      const name = await addOptDlg("gym", gyms);
+      if (!name) return;
+      if (!gyms.includes(name)) gyms.push(name);
+      f.gym = name; render();
+    };
+    $("#colorChips").onclick = async e => { const b = e.target.closest("button"); if (!b) return;
+      if (b.dataset.new){
+        saveText();
+        const name = await addOptDlg("color", colors);
+        if (!name) return;
+        if (!colors.includes(name)) colors.push(name);
+        f.color = name; render(); return;
+      }
+      f.color = f.color === b.dataset.v ? null : b.dataset.v;  // tap again to clear
+      $("#colorChips").querySelectorAll(".chip").forEach(x => x.setAttribute("aria-pressed", x.dataset.v === f.color)); };
     $("#typeSeg").onclick = e => { const b = e.target.closest("button"); if (!b) return;
       if (b.dataset.v !== f.type){ saveText(); f.type = b.dataset.v; if (!gradesFor(f.type, f.style).includes(f.grade)) f.grade = null; render(); } };
     $("#styleSeg").onclick = e => { const b = e.target.closest("button"); if (!b) return;
@@ -361,7 +432,7 @@ async function viewForm(id){
       if (!f.grade){ $("#gradeErr").classList.remove("hidden"); $("#gradeChips").scrollIntoView({behavior:"smooth", block:"center"}); return; }
       if (!f.date) f.date = todayStr();
       const now = Date.now();
-      const rec = { id: f.id || uid(), gym:f.gym, type:f.type, style: f.type === "boulder" ? f.style : null, grade:f.grade, attempts:f.attempts, notes:f.notes.trim(), date:f.date,
+      const rec = { id: f.id || uid(), gym:f.gym, type:f.type, style: f.type === "boulder" ? f.style : null, color:f.color || null, grade:f.grade, attempts:f.attempts, notes:f.notes.trim(), date:f.date,
                     photo:f.photo || null, thumb:f.thumb || null, createdAt: f.createdAt || now, updatedAt: now };
       $("#save").disabled = true;
       await putOne(rec);
@@ -370,7 +441,7 @@ async function viewForm(id){
     };
     if (editing) $("#del").onclick = () => deleteClimb(f.id);
   };
-  const saveText = () => { const n = $("#notes"), d = $("#date"), g = $("#gym"); if (n) f.notes = n.value; if (d) f.date = d.value; if (g) f.gym = g.value; };
+  const saveText = () => { const n = $("#notes"), d = $("#date"), g = $("#gym"); if (n) f.notes = n.value; if (d) f.date = d.value; if (g && g.value !== "__new") f.gym = g.value; };
   render();
 }
 
@@ -392,6 +463,7 @@ async function viewDetail(id){
       <dt>Attempts</dt><dd>${attLong(c.attempts)}</dd>
       <dt>Date</dt><dd>${fmtDate(c.date, true)}</dd>
       ${c.gym ? `<dt>Gym</dt><dd>${esc(c.gym)}</dd>` : ""}
+      ${c.color ? `<dt>Color</dt><dd>${swatchHTML(c.color)}${esc(c.color)}</dd>` : ""}
       ${c.notes ? `<dt>Notes</dt><dd class="notes">${esc(c.notes)}</dd>` : ""}
     </dl>
     <div class="sp"></div>
@@ -407,7 +479,7 @@ async function viewHistory(){
   const all = await getAll();
   $("#app").innerHTML = `
     <div class="toolbar">
-      <input type="search" id="q" placeholder="Search grade, gym or notes" value="${esc(hist.q)}">
+      <input type="search" id="q" placeholder="Search grade, gym, color or notes" value="${esc(hist.q)}">
       <div class="seg" id="tSeg">${[["all","All"],...Object.entries(TYPES)].map(([k,v]) => `<button data-v="${k}" aria-pressed="${hist.type===k}">${v}</button>`).join("")}</div>
       <select id="style" aria-label="Boulder style" class="hidden">
         <option value="any">Traditional and comp</option><option value="trad">Traditional only</option><option value="comp">Comp only</option></select>
@@ -467,7 +539,7 @@ async function viewHistory(){
       if (hist.att === "le3" && c.attempts > 3) return false;
       if (hist.att === "ge4" && c.attempts < 4) return false;
       if (from && c.date < from) return false;
-      if (q && ![gradeText(c), c.notes || "", c.gym || "", TYPES[c.type], isComp(c) ? "comp chili" : c.type === "boulder" ? "traditional" : ""].join(" ").toLowerCase().includes(q)) return false;
+      if (q && ![gradeText(c), c.notes || "", c.gym || "", c.color || "", TYPES[c.type], isComp(c) ? "comp chili" : c.type === "boulder" ? "traditional" : ""].join(" ").toLowerCase().includes(q)) return false;
       return true;
     });
     const byDate = (a,b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt;
