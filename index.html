@@ -322,7 +322,7 @@ const itemHTML = c => `
       <div class="g">${c.color ? swatchHTML(c.color) : ""}${gradeHTML(c.grade, c.type, c.style)}${badgeHTML(c)}</div>
       <div class="sub">${c.notes ? esc(c.notes) : fmtDate(c.date)}</div>
     </div>
-    <div class="att">${attLong(c.attempts)}<div class="st ${isSent(c) ? "sent" : ""}">${isSent(c) ? "✓ Sent" : "Project"}</div></div>
+    <div class="att">${isSent(c) && c.attempts === 1 ? "Flash" : attLong(c.attempts)}<div class="st ${isSent(c) ? "sent" : ""}">${isSent(c) ? "✓ Sent" : "Project"}</div></div>
   </a>`;
 
 /* ---------- views ---------- */
@@ -523,7 +523,7 @@ async function viewHistory(){
       <div class="row">
         <select id="grade" aria-label="Grade"></select>
         <select id="att" aria-label="Attempts">
-          <option value="any">Any attempts</option><option value="flash">Sent on 1st attempt</option>
+          <option value="any">Any attempts</option><option value="flash">Flash</option>
           <option value="le3">3 or fewer</option><option value="ge4">4 or more</option></select>
       </div>
       <div class="row">
