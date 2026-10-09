@@ -77,6 +77,7 @@ textarea{min-height:90px;resize:vertical}
 .att{font-size:13px;font-weight:600;color:var(--muted);text-align:right;flex:none}
 .att .st{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;margin-top:2px}
 .att .st.sent{color:var(--sent)}
+.item.dnf{opacity:.7}
 .item .g .swatch{width:12px;height:12px;margin-right:6px;vertical-align:0}
 .stepper{display:flex;align-items:center;gap:14px}
 .stepper button{width:52px;height:52px;border-radius:50%;border:1px solid var(--line);background:var(--surface);cursor:pointer;
@@ -89,6 +90,7 @@ textarea{min-height:90px;resize:vertical}
 .toolbar{display:flex;flex-direction:column;gap:10px;margin-bottom:12px}
 .toolbar .row select{padding:10px}
 .toolbar .seg button{font-size:14px}
+#sSeg button{flex:1 1 auto}
 .count{font-size:13px;color:var(--muted);margin:4px 2px 8px}
 .empty{text-align:center;color:var(--muted);padding:40px 16px}
 .detail img{width:100%;border-radius:var(--radius);display:block;margin-bottom:14px;border:1px solid var(--line)}
@@ -200,6 +202,10 @@ const badgeHTML = c => `<span class="badge b-${c.type}">${TYPES[c.type]}</span>$
 const attLong = n => n === 1 ? "1 attempt" : n + " attempts";
 // Climbs logged before projects existed were all sends, so only an explicit false means "project".
 const isSent = c => c.sent !== false;
+// An unsent climb the user gave up on (usually because the route was taken down). Kept for history and stats but hidden by default.
+const isDnf = c => !isSent(c) && !!c.dnf;
+const isProject = c => !isSent(c) && !c.dnf;
+const statusText = c => isSent(c) ? "✓ Sent" : isDnf(c) ? "Did not complete" : "Project";
 // Stamp a climb as touched today. c.days lists every day it was added or changed (for the Gym days stat).
 const touch = c => ({ ...c, updatedAt: Date.now(), days: [...new Set([...(c.days || []), todayStr()])] });
 // Days the climber was active: each climb's date, send date, and every day it was added or changed.
@@ -316,13 +322,13 @@ function setHeader(title, back, right){
 function setTab(tab){ document.querySelectorAll("nav.tabs a").forEach(a => a.dataset.tab === tab ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current")); }
 $("#backBtn").onclick = () => history.length > 1 ? history.back() : (location.hash = "#/");
 const itemHTML = c => `
-  <a class="item card" href="#/climb/${c.id}">
+  <a class="item card${isDnf(c) ? " dnf" : ""}" href="#/climb/${c.id}">
     ${c.thumb ? `<img class="thumb" src="${objUrl(c.thumb)}" alt="">` : `<div class="thumb"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M3 20l6-10 4 6 3-4 5 8z"/></svg></div>`}
     <div class="main">
       <div class="g">${c.color ? swatchHTML(c.color) : ""}${gradeHTML(c.grade, c.type, c.style)}${badgeHTML(c)}</div>
       <div class="sub">${c.notes ? esc(c.notes) : fmtDate(c.date)}</div>
     </div>
-    <div class="att">${isSent(c) && c.attempts === 1 ? "Flash" : attLong(c.attempts)}<div class="st ${isSent(c) ? "sent" : ""}">${isSent(c) ? "✓ Sent" : "Project"}</div></div>
+    <div class="att">${isSent(c) && c.attempts === 1 ? "Flash" : attLong(c.attempts)}<div class="st ${isSent(c) ? "sent" : ""}">${statusText(c)}</div></div>
   </a>`;
 
 /* ---------- views ---------- */
@@ -332,7 +338,7 @@ async function viewHome(){
   const best = k => { const xs = all.filter(c => isSent(c) && catOf(c) === k); if (!xs.length) return "—";
     const b = xs.reduce((a,b) => gradeIdx(b) > gradeIdx(a) ? b : a); return gradeHTML(b.grade, b.type, b.style); };
   // most recently touched first, so a project you just tried moves to the top
-  const projects = all.filter(c => !isSent(c)).sort((a,b) => b.updatedAt - a.updatedAt);
+  const projects = all.filter(isProject).sort((a,b) => b.updatedAt - a.updatedAt);
   $("#app").innerHTML = `
     <a class="btn primary big" href="#/log">
       <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
@@ -454,7 +460,7 @@ async function viewForm(id){
       if (!f.grade){ $("#gradeErr").classList.remove("hidden"); $("#gradeChips").scrollIntoView({behavior:"smooth", block:"center"}); return; }
       if (!f.date) f.date = todayStr();
       const rec = touch({ id: f.id || uid(), gym:f.gym, type:f.type, style: f.type === "boulder" ? f.style : null, color:f.color || null, grade:f.grade, attempts:f.attempts,
-                    sent:f.sent, sentDate: f.sent ? (f.sentDate || todayStr()) : null, notes:f.notes.trim(), date:f.date,
+                    sent:f.sent, dnf: !f.sent && !!f.dnf, sentDate: f.sent ? (f.sentDate || todayStr()) : null, notes:f.notes.trim(), date:f.date,
                     photo:f.photo || null, thumb:f.thumb || null, days: f.days, createdAt: f.createdAt || Date.now() });
       $("#save").disabled = true;
       await putOne(rec);
@@ -482,20 +488,32 @@ async function viewDetail(id){
     ${c.photo ? `<img src="${objUrl(c.photo)}" alt="Route photo">` : ""}
     <dl class="kv card">
       <dt>Grade</dt><dd>${gradeHTML(c.grade, c.type, c.style)}${badgeHTML(c)}</dd>
-      <dt>Status</dt><dd>${isSent(c) ? `<span style="color:var(--sent)">✓ Sent</span>${c.sentDate ? ` · ${fmtDate(c.sentDate)}` : ""}` : "Project"}</dd>
+      <dt>Status</dt><dd>${isSent(c) ? `<span style="color:var(--sent)">✓ Sent</span>${c.sentDate ? ` · ${fmtDate(c.sentDate)}` : ""}` : statusText(c)}</dd>
       <dt>Attempts</dt><dd>${attLong(c.attempts)}</dd>
       <dt>${isSent(c) && c.sentDate ? "First tried" : "Date"}</dt><dd>${fmtDate(c.date, true)}</dd>
       ${c.gym ? `<dt>Gym</dt><dd>${esc(c.gym)}</dd>` : ""}
       ${c.color ? `<dt>Color</dt><dd>${swatchHTML(c.color)}${esc(c.color)}</dd>` : ""}
       ${c.notes ? `<dt>Notes</dt><dd class="notes">${esc(c.notes)}</dd>` : ""}
     </dl>
-    ${isSent(c) ? "" : `<div class="sp"></div>
-    <div class="row"><button class="btn big" id="plusOne">+1 attempt</button><button class="btn big send" id="markSent">Mark as sent</button></div>`}
+    ${isProject(c) ? `<div class="sp"></div>
+    <div class="row"><button class="btn big" id="plusOne">+1 attempt</button><button class="btn big send" id="markSent">Mark as sent</button></div>
+    <div class="sp"></div><button class="btn" id="markDnf">Did not complete</button>
+    <p class="muted" style="text-align:center;margin:6px 0 0">Route taken down? This hides it from your projects but keeps it in your stats.</p>` : ""}
+    ${isDnf(c) ? `<div class="sp"></div><button class="btn" id="reopen">Reopen as project</button>` : ""}
     <div class="sp"></div>
     <div class="row"><a class="btn" href="#/edit/${c.id}">Edit</a><button class="btn danger" id="del">Delete</button></div>
   </div>`;
   $("#del").onclick = () => deleteClimb(c.id);
-  if (!isSent(c)){
+  // These don't touch(): they're bookkeeping, not a day at the gym, so they shouldn't add to Gym days.
+  if (isDnf(c)) $("#reopen").onclick = async () => {
+    await putOne({ ...c, dnf:false, updatedAt: Date.now() });
+    toast("Back in your projects"); viewDetail(id);
+  };
+  if (isProject(c)){
+    $("#markDnf").onclick = async () => {
+      await putOne({ ...c, dnf:true, updatedAt: Date.now() });
+      toast("Marked as did not complete"); viewDetail(id);
+    };
     $("#plusOne").onclick = async () => {
       if (c.attempts >= MAX_ATTEMPTS) return;
       await putOne(touch({ ...c, attempts: c.attempts + 1 }));
@@ -516,7 +534,7 @@ async function viewHistory(){
   $("#app").innerHTML = `
     <div class="toolbar">
       <input type="search" id="q" placeholder="Search grade, gym, color or notes" value="${esc(hist.q)}">
-      <div class="seg" id="sSeg">${[["projects","Projects"],["sent","Sent"],["all","All"]].map(([k,v]) => `<button data-v="${k}" aria-pressed="${hist.status===k}">${v}</button>`).join("")}</div>
+      <div class="seg" id="sSeg">${[["projects","Projects"],["sent","Sent"],["all","All"],["dnf","Incomplete"]].map(([k,v]) => `<button data-v="${k}" aria-pressed="${hist.status===k}">${v}</button>`).join("")}</div>
       <div class="seg" id="tSeg">${[["all","All"],...Object.entries(TYPES)].map(([k,v]) => `<button data-v="${k}" aria-pressed="${hist.type===k}">${v}</button>`).join("")}</div>
       <select id="style" aria-label="Boulder style" class="hidden">
         <option value="any">Traditional and comp</option><option value="trad">Traditional only</option><option value="comp">Comp only</option></select>
@@ -565,6 +583,8 @@ async function viewHistory(){
     else if (hist.period !== "all"){ const d = new Date(); d.setDate(d.getDate() - Number(hist.period) + 1);
       from = d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); }
     let xs = all.filter(c => {
+      // "Did not complete" climbs only show when that filter is picked
+      if (hist.status === "dnf" ? !isDnf(c) : isDnf(c)) return false;
       if (hist.status === "projects" && isSent(c)) return false;
       if (hist.status === "sent" && !isSent(c)) return false;
       if (hist.type !== "all" && c.type !== hist.type) return false;
@@ -578,7 +598,7 @@ async function viewHistory(){
       if (hist.att === "le3" && c.attempts > 3) return false;
       if (hist.att === "ge4" && c.attempts < 4) return false;
       if (from && c.date < from) return false;
-      if (q && ![gradeText(c), c.notes || "", c.gym || "", c.color || "", isSent(c) ? "sent" : "project", TYPES[c.type], isComp(c) ? "comp chili" : c.type === "boulder" ? "traditional" : ""].join(" ").toLowerCase().includes(q)) return false;
+      if (q && ![gradeText(c), c.notes || "", c.gym || "", c.color || "", isSent(c) ? "sent" : isDnf(c) ? "did not complete incomplete" : "project", TYPES[c.type], isComp(c) ? "comp chili" : c.type === "boulder" ? "traditional" : ""].join(" ").toLowerCase().includes(q)) return false;
       return true;
     });
     const byDate = (a,b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt;
