@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#d9480f">
 <meta name="description" content="Personal indoor climbing log">
-<title>Climb Log</title>
+<title>The Climbing Log</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-192.png">
@@ -30,7 +30,9 @@ body{min-height:100vh;padding-bottom:calc(72px + env(safe-area-inset-bottom))}
 button,input,select,textarea{font:inherit;color:inherit}
 header.top{position:sticky;top:0;z-index:5;background:var(--bg);display:flex;align-items:center;gap:8px;
   padding:calc(10px + env(safe-area-inset-top)) 16px 10px;border-bottom:1px solid var(--line)}
-header.top h1{font-size:19px;margin:0;flex:1;font-weight:700;letter-spacing:-.01em}
+header.top .ttl{flex:1;min-width:0}
+header.top h1{font-size:19px;margin:0;font-weight:700;letter-spacing:-.01em}
+header.top .subhead{margin:1px 0 0;font-size:13px;color:var(--muted)}
 .iconbtn{border:0;background:none;padding:8px;margin:-8px;border-radius:10px;display:grid;place-items:center;cursor:pointer}
 .iconbtn:active{background:var(--surface-2)}
 main{padding:16px;max-width:640px;margin:0 auto}
@@ -138,7 +140,10 @@ svg{display:block}
   <button class="iconbtn hidden" id="backBtn" aria-label="Back">
     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
   </button>
-  <h1 id="title">Climb Log</h1>
+  <div class="ttl">
+    <h1 id="title">The Climbing Log</h1>
+    <p class="subhead" id="subhead">The unofficial climbing app of the A-Team</p>
+  </div>
   <span id="headerRight"></span>
 </header>
 <div id="bkBanner" class="banner hidden">
@@ -314,8 +319,9 @@ async function resizeImage(file, max, quality){
   bmp.close && bmp.close();
   return new Promise(r => c.toBlob(r, "image/jpeg", quality));
 }
-function setHeader(title, back, right){
+function setHeader(title, back, right, sub){
   $("#title").textContent = title;
+  $("#subhead").classList.toggle("hidden", !sub);
   $("#backBtn").classList.toggle("hidden", !back);
   $("#headerRight").innerHTML = right || "";
 }
@@ -333,7 +339,7 @@ const itemHTML = c => `
 
 /* ---------- views ---------- */
 async function viewHome(){
-  setHeader("Climb Log", false); setTab("home");
+  setHeader("The Climbing Log", false, "", true); setTab("home");
   const all = await getAll();
   const best = k => { const xs = all.filter(c => isSent(c) && catOf(c) === k); if (!xs.length) return "—";
     const b = xs.reduce((a,b) => gradeIdx(b) > gradeIdx(a) ? b : a); return gradeHTML(b.grade, b.type, b.style); };
@@ -663,7 +669,7 @@ async function manualExport(){
   const name = `climb-log-backup-${todayStr()}.json`;
   const file = new File([blob], name, { type:"application/json" });
   if (navigator.canShare && navigator.canShare({ files:[file] }) && matchMedia("(pointer:coarse)").matches){
-    try { await navigator.share({ files:[file], title:"Climb Log backup" }); await updSettings({ lastBackupAt: Date.now() }); return true; }
+    try { await navigator.share({ files:[file], title:"The Climbing Log backup" }); await updSettings({ lastBackupAt: Date.now() }); return true; }
     catch (e){ if (e.name === "AbortError") return false; }
   }
   const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name;
@@ -747,7 +753,7 @@ async function viewBackup(){
       <label class="btn">Choose file to restore<input type="file" id="imp" accept=".json,application/json" class="hidden"></label>
     </div>
     <div class="sp"></div>
-    <p class="muted" style="text-align:center">Climb Log · works offline</p>`;
+    <p class="muted" style="text-align:center">The Climbing Log · works offline</p>`;
   $("#iv").value = String(st.interval);
   $("#iv").onchange = async e => { await updSettings({ interval: Number(e.target.value) }); toast("Saved"); checkBackup(); };
   $("#exp").onclick = async () => {
@@ -758,7 +764,7 @@ async function viewBackup(){
   };
   if (canPickFile) $("#pick").onclick = async () => {
     try {
-      const handle = await showSaveFilePicker({ suggestedName: AUTO_NAME, types:[{ description:"Climb Log backup", accept:{ "application/json":[".json"] } }] });
+      const handle = await showSaveFilePicker({ suggestedName: AUTO_NAME, types:[{ description:"The Climbing Log backup", accept:{ "application/json":[".json"] } }] });
       await metaSet("fileHandle", handle);
       await writeToFile(handle); toast("Backup saved to " + handle.name);
       $("#bkBanner").classList.add("hidden");
@@ -776,7 +782,7 @@ async function viewBackup(){
         await putOne({ ...c, photo: c.photo ? await dataURLToBlob(c.photo) : null, thumb: c.thumb ? await dataURLToBlob(c.thumb) : null });
       }
       toast(`Restored ${data.climbs.length} climbs`); viewBackup();
-    } catch { toast("That isn't a Climb Log backup file"); }
+    } catch { toast("That isn't a Climbing Log backup file"); }
   };
 }
 

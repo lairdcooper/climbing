@@ -1,6 +1,6 @@
 {
-  "name": "Climb Log",
-  "short_name": "Climb Log",
+  "name": "The Climbing Log",
+  "short_name": "Climbing Log",
   "description": "Personal indoor climbing log",
   "start_url": "./",
   "scope": "./",
